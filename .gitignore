@@ -1,0 +1,40 @@
+# Archivos de compilación
+bin/
+obj/
+*.exe
+*.dll
+*.so
+*.dylib
+
+# Archivos de Visual Studio
+.vs/
+.vscode/
+*.user
+*.suo
+*.sln.docstates
+
+# Archivos de configuración local
+appsettings.Development.json
+*.log
+
+# Archivos de Node (frontend)
+node_modules/
+npm-debug.log
+yarn-error.log
+.env.local
+
+# Archivos subidos
+DocumentosSubidos/
+
+# macOS
+.DS_Store
+
+# Archivos de IDE
+.idea/
+*.swp
+*.swo
+
+# Archivos temporales
+temp/
+tmp/
+*.tmp
