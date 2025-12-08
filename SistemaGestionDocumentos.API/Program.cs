@@ -1,6 +1,7 @@
 using Microsoft.EntityFrameworkCore;
 using SistemaGestionDocumentos.API.Data;
 using SistemaGestionDocumentos.API.Utils;
+using SistemaGestionDocumentos.API.Services;
 
 var constructorAplicacion = WebApplication.CreateBuilder(args);
 
@@ -12,6 +13,9 @@ constructorAplicacion.Services.AddDbContext<SistemaGestionDocumentosDbContext>(o
         constructorAplicacion.Configuration.GetConnectionString("ConexionBaseDatosPrincipal")
     )
 );
+
+// Agregar servicio de auditoría
+constructorAplicacion.Services.AddScoped<AuditoriaService>();
 
 // Agregar controladores
 constructorAplicacion.Services.AddControllers();

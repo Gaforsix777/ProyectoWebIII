@@ -2,6 +2,7 @@ using Microsoft.AspNetCore.Mvc;
 using Microsoft.EntityFrameworkCore;
 using SistemaGestionDocumentos.API.Data;
 using SistemaGestionDocumentos.API.Models;
+using SistemaGestionDocumentos.API.Services;
 
 namespace SistemaGestionDocumentos.API.Controllers
 {
@@ -11,11 +12,13 @@ namespace SistemaGestionDocumentos.API.Controllers
     {
         private readonly SistemaGestionDocumentosDbContext _contextoBD;
         private readonly ILogger<WorkflowAprobacionController> _registradorDeLog;
+        private readonly AuditoriaService _servicioAuditoria;
 
-        public WorkflowAprobacionController(SistemaGestionDocumentosDbContext contextoBD, ILogger<WorkflowAprobacionController> registrador)
+        public WorkflowAprobacionController(SistemaGestionDocumentosDbContext contextoBD, ILogger<WorkflowAprobacionController> registrador, AuditoriaService servicioAuditoria)
         {
             _contextoBD = contextoBD;
             _registradorDeLog = registrador;
+            _servicioAuditoria = servicioAuditoria;
         }
 
         /// <summary>
@@ -57,6 +60,15 @@ namespace SistemaGestionDocumentos.API.Controllers
                 _contextoBD.DocumentosDelSistema.Update(documentoExistente);
 
                 await _contextoBD.SaveChangesAsync();
+
+                // Registrar en auditoría - usuario que propietario del documento
+                await _servicioAuditoria.RegistrarAccionAuditoria(
+                    documentoExistente.IdentificadorUsuarioPropietarioDelDocumento,
+                    $"Solicitud de aprobación creada para documento {datosAprobacion.IdentificadorDocumento}",
+                    $"Aprobador: {usuarioAprobador.NombreCompletoDelUsuario}, Prioridad: {datosAprobacion.Prioridad ?? "Media"}",
+                    datosAprobacion.IdentificadorDocumento,
+                    HttpContext.Connection.RemoteIpAddress?.ToString() ?? ""
+                );
 
                 _registradorDeLog.LogInformation($"Documento {datosAprobacion.IdentificadorDocumento} solicitado para aprobación");
 
@@ -103,6 +115,15 @@ namespace SistemaGestionDocumentos.API.Controllers
 
                 _contextoBD.WorkflowAprobacionDelSistema.Update(registroAprobacion);
                 await _contextoBD.SaveChangesAsync();
+
+                // Registrar en auditoría - el aprobador registra su aprobación
+                await _servicioAuditoria.RegistrarAccionAuditoria(
+                    registroAprobacion.IdentificadorUsuarioAprobadorDelDocumento,
+                    $"Documento {registroAprobacion.IdentificadorDocumentoAprobar} aprobado",
+                    $"Comentarios: {datosRespuesta.Comentarios ?? "Sin comentarios"}",
+                    registroAprobacion.IdentificadorDocumentoAprobar,
+                    HttpContext.Connection.RemoteIpAddress?.ToString() ?? ""
+                );
 
                 _registradorDeLog.LogInformation($"Documento aprobado por usuario {registroAprobacion.IdentificadorUsuarioAprobadorDelDocumento}");
 

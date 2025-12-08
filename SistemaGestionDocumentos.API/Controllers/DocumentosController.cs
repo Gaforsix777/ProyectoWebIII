@@ -2,6 +2,7 @@ using Microsoft.AspNetCore.Mvc;
 using Microsoft.EntityFrameworkCore;
 using SistemaGestionDocumentos.API.Data;
 using SistemaGestionDocumentos.API.Models;
+using SistemaGestionDocumentos.API.Services;
 
 namespace SistemaGestionDocumentos.API.Controllers
 {
@@ -11,11 +12,13 @@ namespace SistemaGestionDocumentos.API.Controllers
     {
         private readonly SistemaGestionDocumentosDbContext _contextoBD;
         private readonly ILogger<DocumentosController> _registradorDeLog;
+        private readonly AuditoriaService _servicioAuditoria;
 
-        public DocumentosController(SistemaGestionDocumentosDbContext contextoBD, ILogger<DocumentosController> registrador)
+        public DocumentosController(SistemaGestionDocumentosDbContext contextoBD, ILogger<DocumentosController> registrador, AuditoriaService servicioAuditoria)
         {
             _contextoBD = contextoBD;
             _registradorDeLog = registrador;
+            _servicioAuditoria = servicioAuditoria;
         }
 
      /// <summary>
@@ -165,6 +168,15 @@ public async Task<ActionResult<IEnumerable<object>>> ObtenerTodosLosDocumentos()
                 _contextoBD.DocumentosDelSistema.Add(nuevoDocumento);
                 await _contextoBD.SaveChangesAsync();
 
+                // Registrar en auditoría
+                await _servicioAuditoria.RegistrarAccionAuditoria(
+                    datosPeticion.IdentificadorUsuarioPropietarioDelDocumento,
+                    $"Nuevo documento creado: {datosPeticion.NombreDescriptivoDelDocumento}",
+                    $"ID Documento: {nuevoDocumento.IdentificadorDocumento}, Estado: Pendiente",
+                    nuevoDocumento.IdentificadorDocumento,
+                    HttpContext.Connection.RemoteIpAddress?.ToString() ?? ""
+                );
+
                 _registradorDeLog.LogInformation($"Documento creado: {datosPeticion.NombreDescriptivoDelDocumento}");
 
                 return CreatedAtAction(nameof(ObtenerDocumentoPorId), new { id = nuevoDocumento.IdentificadorDocumento },
@@ -234,6 +246,15 @@ public async Task<ActionResult<IEnumerable<object>>> ObtenerTodosLosDocumentos()
 
                 _contextoBD.DocumentosDelSistema.Add(nuevoDocumento);
                 await _contextoBD.SaveChangesAsync();
+
+                // Registrar en auditoría
+                await _servicioAuditoria.RegistrarAccionAuditoria(
+                    request.UsuarioId,
+                    $"Documento subido: {request.NombreDescriptivo}",
+                    $"Archivo: {nombreArchivoUnico}, Tamaño: {request.Archivo.Length} bytes",
+                    nuevoDocumento.IdentificadorDocumento,
+                    HttpContext.Connection.RemoteIpAddress?.ToString() ?? ""
+                );
 
                 _registradorDeLog.LogInformation($"Documento subido: {request.NombreDescriptivo} por usuario {request.UsuarioId}");
 

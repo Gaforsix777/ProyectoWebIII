@@ -2,6 +2,7 @@ using Microsoft.AspNetCore.Mvc;
 using Microsoft.EntityFrameworkCore;
 using SistemaGestionDocumentos.API.Data;
 using SistemaGestionDocumentos.API.Models;
+using SistemaGestionDocumentos.API.Services;
 using System.Security.Cryptography;
 using System.Text;
 
@@ -17,12 +18,14 @@ namespace SistemaGestionDocumentos.API.Controllers
     {
         private readonly SistemaGestionDocumentosDbContext _contextoBD;
         private readonly ILogger<UsuariosController> _registradorDeLog;
+        private readonly AuditoriaService _servicioAuditoria;
 
         /// <summary>Constructor con inyección de dependencias</summary>
-        public UsuariosController(SistemaGestionDocumentosDbContext contextoBD, ILogger<UsuariosController> registrador)
+        public UsuariosController(SistemaGestionDocumentosDbContext contextoBD, ILogger<UsuariosController> registrador, AuditoriaService servicioAuditoria)
         {
             _contextoBD = contextoBD;
             _registradorDeLog = registrador;
+            _servicioAuditoria = servicioAuditoria;
         }
 
         /// <summary>
@@ -35,6 +38,16 @@ namespace SistemaGestionDocumentos.API.Controllers
         {
             try
             {
+                // Validar que el rol sea válido
+                string[] rolesValidos = { "Solicitante", "Aprobador", "Admin" };
+                string rolIngresado = datosPeticionRegistro.Rol ?? "Solicitante";
+                
+                if (!rolesValidos.Contains(rolIngresado, StringComparer.OrdinalIgnoreCase))
+                    return BadRequest(new { 
+                        mensaje = $"Rol inválido. Los roles permitidos son: {string.Join(", ", rolesValidos)}", 
+                        exitoso = false 
+                    });
+
                 var usuarioYaExiste = await _contextoBD.UsuariosDelSistema
                     .FirstOrDefaultAsync(u => u.CorreoElectronicoDelUsuario == datosPeticionRegistro.CorreoElectronico);
 
@@ -48,13 +61,22 @@ namespace SistemaGestionDocumentos.API.Controllers
                     CorreoElectronicoDelUsuario = datosPeticionRegistro.CorreoElectronico,
                     ContraseñaHashDelUsuario = contraseñaHasheada,
                     NombreCompletoDelUsuario = datosPeticionRegistro.NombreCompleto,
-                    RolDelUsuario = datosPeticionRegistro.Rol ?? "Solicitante",
+                    RolDelUsuario = rolIngresado,
                     FechaCreacionDelUsuario = DateTime.UtcNow,
                     IndicadorUsuarioActivo = true
                 };
 
                 _contextoBD.UsuariosDelSistema.Add(nuevoUsuario);
                 await _contextoBD.SaveChangesAsync();
+
+                // Registrar en auditoría - el usuario se audita a sí mismo
+                await _servicioAuditoria.RegistrarAccionAuditoria(
+                    nuevoUsuario.IdentificadorUsuario,
+                    $"Nuevo usuario registrado: {datosPeticionRegistro.CorreoElectronico}",
+                    $"Rol: {rolIngresado}",
+                    null,
+                    HttpContext.Connection.RemoteIpAddress?.ToString() ?? ""
+                );
 
                 _registradorDeLog.LogInformation($"Nuevo usuario registrado: {datosPeticionRegistro.CorreoElectronico}");
 
@@ -90,6 +112,15 @@ namespace SistemaGestionDocumentos.API.Controllers
 
                 if (!usuarioEncontrado.IndicadorUsuarioActivo)
                     return Unauthorized(new { mensaje = "El usuario ha sido desactivado", exitoso = false });
+
+                // Registrar login en auditoría
+                await _servicioAuditoria.RegistrarAccionAuditoria(
+                    usuarioEncontrado.IdentificadorUsuario,
+                    "Login exitoso del sistema",
+                    $"Email: {datosLogin.CorreoElectronico}",
+                    null,
+                    HttpContext.Connection.RemoteIpAddress?.ToString() ?? ""
+                );
 
                 // Generar token simple
                 string token = Convert.ToBase64String(System.Text.Encoding.UTF8.GetBytes(
@@ -192,6 +223,15 @@ namespace SistemaGestionDocumentos.API.Controllers
         {
             try
             {
+                // Validar que el nuevo rol sea válido
+                string[] rolesValidos = { "Solicitante", "Aprobador", "Admin" };
+                
+                if (!rolesValidos.Contains(datosActualizacion.NuevoRol, StringComparer.OrdinalIgnoreCase))
+                    return BadRequest(new { 
+                        mensaje = $"Rol inválido. Los roles permitidos son: {string.Join(", ", rolesValidos)}", 
+                        exitoso = false 
+                    });
+
                 var usuarioAActualizar = await _contextoBD.UsuariosDelSistema
                     .FirstOrDefaultAsync(u => u.IdentificadorUsuario == id);
 
@@ -203,6 +243,18 @@ namespace SistemaGestionDocumentos.API.Controllers
 
                 _contextoBD.UsuariosDelSistema.Update(usuarioAActualizar);
                 await _contextoBD.SaveChangesAsync();
+
+                // Registrar en auditoría - obtener usuario autenticado desde header
+                if (Request.Headers.TryGetValue("X-Usuario-Id", out var usuarioIdHeader) && int.TryParse(usuarioIdHeader.ToString(), out int usuarioActualId))
+                {
+                    await _servicioAuditoria.RegistrarAccionAuditoria(
+                        usuarioActualId,
+                        $"Rol del usuario {id} actualizado",
+                        $"De: {rolAnterior} → A: {datosActualizacion.NuevoRol}",
+                        null,
+                        HttpContext.Connection.RemoteIpAddress?.ToString() ?? ""
+                    );
+                }
 
                 _registradorDeLog.LogInformation($"Rol del usuario {id} actualizado de {rolAnterior} a {datosActualizacion.NuevoRol}");
 
@@ -233,6 +285,18 @@ namespace SistemaGestionDocumentos.API.Controllers
                 usuarioADesactivar.IndicadorUsuarioActivo = false;
                 _contextoBD.UsuariosDelSistema.Update(usuarioADesactivar);
                 await _contextoBD.SaveChangesAsync();
+
+                // Registrar en auditoría - obtener usuario autenticado desde header
+                if (Request.Headers.TryGetValue("X-Usuario-Id", out var usuarioIdHeader) && int.TryParse(usuarioIdHeader.ToString(), out int usuarioActualId))
+                {
+                    await _servicioAuditoria.RegistrarAccionAuditoria(
+                        usuarioActualId,
+                        $"Usuario {id} desactivado",
+                        $"Usuario: {usuarioADesactivar.NombreCompletoDelUsuario} ({usuarioADesactivar.CorreoElectronicoDelUsuario})",
+                        null,
+                        HttpContext.Connection.RemoteIpAddress?.ToString() ?? ""
+                    );
+                }
 
                 _registradorDeLog.LogInformation($"Usuario {id} desactivado");
 
