@@ -1,6 +1,215 @@
 @SistemaGestionDocumentos.API_HostAddress = http://localhost:5158
 
-GET {{SistemaGestionDocumentos.API_HostAddress}}/weatherforecast/
-Accept: application/json
+### ========================================
+### 1. REGISTRO DE USUARIOS
+### ========================================
 
-###
+### 1.1 Crear usuario Solicitante
+POST {{SistemaGestionDocumentos.API_HostAddress}}/api/usuarios/registrar
+Content-Type: application/json
+
+{
+  "nombreCompleto": "Juan Pérez García",
+  "correoElectronico": "juan.perez@empresa.com",
+  "contraseña": "password123",
+  "rol": "Solicitante"
+}
+
+### 1.2 Crear usuario Aprobador
+POST {{SistemaGestionDocumentos.API_HostAddress}}/api/usuarios/registrar
+Content-Type: application/json
+
+{
+  "nombreCompleto": "María López Martínez",
+  "correoElectronico": "maria.lopez@empresa.com",
+  "contraseña": "password123",
+  "rol": "Aprobador"
+}
+
+### 1.3 Crear usuario Admin
+POST {{SistemaGestionDocumentos.API_HostAddress}}/api/usuarios/registrar
+Content-Type: application/json
+
+{
+  "nombreCompleto": "Carlos Rodríguez Admin",
+  "correoElectronico": "carlos.admin@empresa.com",
+  "contraseña": "password123",
+  "rol": "Admin"
+}
+
+### ========================================
+### 2. LOGIN DE USUARIOS
+### ========================================
+
+### 2.1 Login - Juan Pérez (Solicitante)
+POST {{SistemaGestionDocumentos.API_HostAddress}}/api/usuarios/login
+Content-Type: application/json
+
+{
+  "correoElectronico": "juan.perez@empresa.com",
+  "contraseña": "password123"
+}
+
+### 2.2 Login - María López (Aprobador)
+POST {{SistemaGestionDocumentos.API_HostAddress}}/api/usuarios/login
+Content-Type: application/json
+
+{
+  "correoElectronico": "maria.lopez@empresa.com",
+  "contraseña": "password123"
+}
+
+### ========================================
+### 3. CREACIÓN Y SUBIDA DE DOCUMENTOS
+### ========================================
+
+### 3.1 Crear documento (Juan - Solicitante)
+POST {{SistemaGestionDocumentos.API_HostAddress}}/api/documentos/crear
+Content-Type: application/json
+
+{
+  "titulo": "Propuesta de Presupuesto 2025",
+  "descripcion": "Documento de propuesta de presupuesto anual para el departamento de IT",
+  "usuarioPropietarioId": 1,
+  "tipoDocumento": "Propuesta"
+}
+
+### 3.2 Crear segundo documento
+POST {{SistemaGestionDocumentos.API_HostAddress}}/api/documentos/crear
+Content-Type: application/json
+
+{
+  "titulo": "Contrato de Servicios",
+  "descripcion": "Contrato para servicios de consultoría externa",
+  "usuarioPropietarioId": 1,
+  "tipoDocumento": "Contrato"
+}
+
+### 3.3 Subir archivo al documento 1
+POST {{SistemaGestionDocumentos.API_HostAddress}}/api/documentos/1/subir
+Content-Type: multipart/form-data; boundary=----WebKitFormBoundary7MA4YWxkTrZu0gW
+
+------WebKitFormBoundary7MA4YWxkTrZu0gW
+Content-Disposition: form-data; name="archivo"; filename="presupuesto_2025.pdf"
+Content-Type: application/pdf
+
+< ./sample-files/presupuesto.pdf
+------WebKitFormBoundary7MA4YWxkTrZu0gW--
+
+### ========================================
+### 4. FLUJO DE APROBACIÓN
+### ========================================
+
+### 4.1 Solicitar aprobación documento 1 (Juan solicita a María)
+POST {{SistemaGestionDocumentos.API_HostAddress}}/api/workflow/solicitar-aprobacion
+Content-Type: application/json
+
+{
+  "documentoId": 1,
+  "usuarioSolicitanteId": 1,
+  "usuarioAprobadorId": 2,
+  "comentariosDelSolicitante": "Por favor revisar la propuesta de presupuesto. Necesito esta aprobación para el próximo viernes."
+}
+
+### 4.2 Solicitar aprobación documento 2 (Juan solicita a María)
+POST {{SistemaGestionDocumentos.API_HostAddress}}/api/workflow/solicitar-aprobacion
+Content-Type: application/json
+
+{
+  "documentoId": 2,
+  "usuarioSolicitanteId": 1,
+  "usuarioAprobadorId": 2,
+  "comentariosDelSolicitante": "Contrato listo para revisión. Hemos hecho ajustes según feedback anterior."
+}
+
+### 4.3 Aprobar documento 1 (María aprueba)
+POST {{SistemaGestionDocumentos.API_HostAddress}}/api/workflow/aprobar
+Content-Type: application/json
+
+{
+  "workflowId": 1,
+  "usuarioAprobadorId": 2,
+  "comentariosDelAprobador": "Presupuesto aprobado. Excelente planificación para el 2025."
+}
+
+### 4.4 Rechazar documento 2 (María rechaza)
+POST {{SistemaGestionDocumentos.API_HostAddress}}/api/workflow/rechazar
+Content-Type: application/json
+
+{
+  "workflowId": 2,
+  "usuarioAprobadorId": 2,
+  "motivoRechazo": "Necesito que revisen la cláusula 5 del contrato. Hay puntos que no están claros respecto a la responsabilidad compartida."
+}
+
+### ========================================
+### 5. CONSULTA DE DATOS
+### ========================================
+
+### 5.1 Obtener todos los usuarios
+GET {{SistemaGestionDocumentos.API_HostAddress}}/api/usuarios
+
+### 5.2 Obtener usuario específico (ID: 1)
+GET {{SistemaGestionDocumentos.API_HostAddress}}/api/usuarios/1
+
+### 5.3 Obtener todos los documentos
+GET {{SistemaGestionDocumentos.API_HostAddress}}/api/documentos
+
+### 5.4 Obtener documento específico (ID: 1)
+GET {{SistemaGestionDocumentos.API_HostAddress}}/api/documentos/1
+
+### 5.5 Obtener documentos por usuario (ID: 1 - Juan)
+GET {{SistemaGestionDocumentos.API_HostAddress}}/api/documentos/usuario/1
+
+### 5.6 Obtener workflows de aprobación pendientes
+GET {{SistemaGestionDocumentos.API_HostAddress}}/api/workflow/pendientes
+
+### 5.7 Obtener todos los workflows
+GET {{SistemaGestionDocumentos.API_HostAddress}}/api/workflow
+
+### 5.8 Obtener workflow específico (ID: 1)
+GET {{SistemaGestionDocumentos.API_HostAddress}}/api/workflow/1
+
+### ========================================
+### 6. AUDITORÍA - CONSULTAR REGISTROS
+### ========================================
+
+### 6.1 Obtener todos los registros de auditoría
+GET {{SistemaGestionDocumentos.API_HostAddress}}/api/auditoria
+
+### 6.2 Obtener auditoría por usuario (ID: 1 - Juan)
+GET {{SistemaGestionDocumentos.API_HostAddress}}/api/auditoria/usuario/1
+
+### 6.3 Obtener auditoría por documento (ID: 1)
+GET {{SistemaGestionDocumentos.API_HostAddress}}/api/auditoria/documento/1
+
+### 6.4 Obtener auditoría por rango de fechas
+GET {{SistemaGestionDocumentos.API_HostAddress}}/api/auditoria/fechas?fechaInicio=2025-12-01&fechaFin=2025-12-09
+
+### ========================================
+### 7. NOTIFICACIONES
+### ========================================
+
+### 7.1 Obtener notificaciones pendientes de María (ID: 2)
+GET {{SistemaGestionDocumentos.API_HostAddress}}/api/notificaciones/usuario/2
+
+### 7.2 Obtener todas las notificaciones
+GET {{SistemaGestionDocumentos.API_HostAddress}}/api/notificaciones
+
+### ========================================
+### 8. GESTIÓN DE USUARIOS (Admin)
+### ========================================
+
+### 8.1 Actualizar rol de usuario (Cambiar Juan a Aprobador)
+PUT {{SistemaGestionDocumentos.API_HostAddress}}/api/usuarios/1/actualizar-rol
+Content-Type: application/json
+
+{
+  "nuevoRol": "Aprobador"
+}
+
+### 8.2 Desactivar usuario (Desactivar a Juan)
+PUT {{SistemaGestionDocumentos.API_HostAddress}}/api/usuarios/1/desactivar
+Content-Type: application/json
+
+{}

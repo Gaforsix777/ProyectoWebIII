@@ -3,6 +3,7 @@ using Microsoft.EntityFrameworkCore;
 using SistemaGestionDocumentos.API.Data;
 using SistemaGestionDocumentos.API.Models;
 using SistemaGestionDocumentos.API.Services;
+using SistemaGestionDocumentos.API.Utils;
 
 namespace SistemaGestionDocumentos.API.Controllers
 {
@@ -153,11 +154,46 @@ public async Task<ActionResult<IEnumerable<object>>> ObtenerTodosLosDocumentos()
         {
             try
             {
+                // Validar título del documento
+                var (tituloValido, mensajeTitulo) = ValidadorDelSistema.ValidarTituloDocumento(
+                    datosPeticion.NombreDescriptivoDelDocumento);
+                if (!tituloValido)
+                    return BadRequest(new { mensaje = mensajeTitulo, exitoso = false });
+
+                // Validar descripción
+                var (descripcionValida, mensajeDescripcion) = ValidadorDelSistema.ValidarDescripcion(
+                    datosPeticion.DescripcionAdicionalesDelDocumento ?? "");
+                if (!descripcionValida)
+                    return BadRequest(new { mensaje = mensajeDescripcion, exitoso = false });
+
+                // Validar tipo de documento si se proporciona
+                if (!string.IsNullOrWhiteSpace(datosPeticion.TipoDocumento))
+                {
+                    var (tipoValido, mensajeTipo) = ValidadorDelSistema.ValidarTipoDocumento(
+                        datosPeticion.TipoDocumento);
+                    if (!tipoValido)
+                        return BadRequest(new { mensaje = mensajeTipo, exitoso = false });
+                }
+
+                // Validar que el usuario exista y esté activo
+                var usuarioExiste = await _contextoBD.UsuariosDelSistema
+                    .FirstOrDefaultAsync(u => u.IdentificadorUsuario == datosPeticion.IdentificadorUsuarioPropietarioDelDocumento);
+
+                if (usuarioExiste == null)
+                    return NotFound(new { mensaje = "Usuario propietario no encontrado", exitoso = false });
+
+                if (!usuarioExiste.IndicadorUsuarioActivo)
+                    return BadRequest(new { mensaje = "El usuario propietario está desactivado", exitoso = false });
+
+                // Sanitizar datos
+                string tituloLimpio = ValidadorDelSistema.SanitizarTexto(datosPeticion.NombreDescriptivoDelDocumento);
+                string descripcionLimpia = ValidadorDelSistema.SanitizarTexto(datosPeticion.DescripcionAdicionalesDelDocumento ?? "");
+
                 var nuevoDocumento = new Documento
                 {
-                    NombreDescriptivoDelDocumento = datosPeticion.NombreDescriptivoDelDocumento,
-                    RutaFisicaDelArchivoDocumento = datosPeticion.RutaFisicaDelArchivoDocumento,
-                    DescripcionAdicionalesDelDocumento = datosPeticion.DescripcionAdicionalesDelDocumento ?? "",
+                    NombreDescriptivoDelDocumento = tituloLimpio,
+                    RutaFisicaDelArchivoDocumento = datosPeticion.RutaFisicaDelArchivoDocumento ?? "",
+                    DescripcionAdicionalesDelDocumento = descripcionLimpia,
                     IdentificadorUsuarioPropietarioDelDocumento = datosPeticion.IdentificadorUsuarioPropietarioDelDocumento,
                     NumeroVersionActualDelDocumento = 1,
                     FechaSubidaDelDocumento = DateTime.UtcNow,
@@ -171,20 +207,21 @@ public async Task<ActionResult<IEnumerable<object>>> ObtenerTodosLosDocumentos()
                 // Registrar en auditoría
                 await _servicioAuditoria.RegistrarAccionAuditoria(
                     datosPeticion.IdentificadorUsuarioPropietarioDelDocumento,
-                    $"Nuevo documento creado: {datosPeticion.NombreDescriptivoDelDocumento}",
-                    $"ID Documento: {nuevoDocumento.IdentificadorDocumento}, Estado: Pendiente",
+                    "Nuevo documento creado",
+                    $"Título: {tituloLimpio} | Tipo: {datosPeticion.TipoDocumento ?? "No especificado"}",
                     nuevoDocumento.IdentificadorDocumento,
                     HttpContext.Connection.RemoteIpAddress?.ToString() ?? ""
                 );
 
-                _registradorDeLog.LogInformation($"Documento creado: {datosPeticion.NombreDescriptivoDelDocumento}");
+                _registradorDeLog.LogInformation($"Nuevo documento creado: ID {nuevoDocumento.IdentificadorDocumento}, Título: {tituloLimpio}");
 
                 return CreatedAtAction(nameof(ObtenerDocumentoPorId), new { id = nuevoDocumento.IdentificadorDocumento },
-                    new 
-                    { 
-                        mensaje = "Documento creado exitosamente", 
-                        documentoId = nuevoDocumento.IdentificadorDocumento, 
-                        exitoso = true 
+                    new {
+                        mensaje = "Documento creado exitosamente",
+                        documentoId = nuevoDocumento.IdentificadorDocumento,
+                        titulo = tituloLimpio,
+                        estado = "Pendiente",
+                        exitoso = true
                     });
             }
             catch (Exception excepcion)
@@ -203,18 +240,49 @@ public async Task<ActionResult<IEnumerable<object>>> ObtenerTodosLosDocumentos()
         {
             try
             {
+                // Validar que el archivo no esté vacío
                 if (request.Archivo == null || request.Archivo.Length == 0)
                     return BadRequest(new { mensaje = "El archivo es requerido", exitoso = false });
 
-                if (string.IsNullOrEmpty(request.NombreDescriptivo))
-                    return BadRequest(new { mensaje = "El nombre descriptivo es requerido", exitoso = false });
+                // Validar tamaño de archivo
+                var (tamañoValido, mensajeTamaño) = ValidadorDelSistema.ValidarTamañoArchivo(request.Archivo.Length);
+                if (!tamañoValido)
+                    return BadRequest(new { mensaje = mensajeTamaño, exitoso = false });
 
-                // Verificar que el usuario existe
+                // Validar extensión de archivo
+                var (extensionValida, mensajeExtension) = ValidadorDelSistema.ValidarExtensionArchivo(
+                    request.Archivo.FileName);
+                if (!extensionValida)
+                    return BadRequest(new { mensaje = mensajeExtension, exitoso = false });
+
+                // Validar nombre descriptivo
+                var (nombreValido, mensajeName) = ValidadorDelSistema.ValidarTituloDocumento(
+                    request.NombreDescriptivo);
+                if (!nombreValido)
+                    return BadRequest(new { mensaje = mensajeName, exitoso = false });
+
+                // Validar descripción si se proporciona
+                if (!string.IsNullOrWhiteSpace(request.Descripcion))
+                {
+                    var (descripcionValida, mensajeDesc) = ValidadorDelSistema.ValidarDescripcion(
+                        request.Descripcion);
+                    if (!descripcionValida)
+                        return BadRequest(new { mensaje = mensajeDesc, exitoso = false });
+                }
+
+                // Verificar que el usuario existe y está activo
                 var usuarioExiste = await _contextoBD.UsuariosDelSistema
                     .FirstOrDefaultAsync(u => u.IdentificadorUsuario == request.UsuarioId);
 
                 if (usuarioExiste == null)
                     return NotFound(new { mensaje = "Usuario no encontrado", exitoso = false });
+
+                if (!usuarioExiste.IndicadorUsuarioActivo)
+                    return BadRequest(new { mensaje = "El usuario está desactivado", exitoso = false });
+
+                // Sanitizar datos
+                string nombreLimpio = ValidadorDelSistema.SanitizarTexto(request.NombreDescriptivo);
+                string descripcionLimpia = ValidadorDelSistema.SanitizarTexto(request.Descripcion ?? "");
 
                 // Crear carpeta de documentos si no existe
                 string carpetaDocumentos = Path.Combine(Directory.GetCurrentDirectory(), "DocumentosSubidos");
@@ -234,9 +302,9 @@ public async Task<ActionResult<IEnumerable<object>>> ObtenerTodosLosDocumentos()
                 // Crear documento en la base de datos
                 var nuevoDocumento = new Documento
                 {
-                    NombreDescriptivoDelDocumento = request.NombreDescriptivo,
+                    NombreDescriptivoDelDocumento = nombreLimpio,
                     RutaFisicaDelArchivoDocumento = rutaCompleta,
-                    DescripcionAdicionalesDelDocumento = request.Descripcion ?? "",
+                    DescripcionAdicionalesDelDocumento = descripcionLimpia,
                     IdentificadorUsuarioPropietarioDelDocumento = request.UsuarioId,
                     NumeroVersionActualDelDocumento = 1,
                     FechaSubidaDelDocumento = DateTime.UtcNow,
@@ -250,13 +318,13 @@ public async Task<ActionResult<IEnumerable<object>>> ObtenerTodosLosDocumentos()
                 // Registrar en auditoría
                 await _servicioAuditoria.RegistrarAccionAuditoria(
                     request.UsuarioId,
-                    $"Documento subido: {request.NombreDescriptivo}",
-                    $"Archivo: {nombreArchivoUnico}, Tamaño: {request.Archivo.Length} bytes",
+                    "Archivo subido al documento",
+                    $"Archivo: {nombreArchivoUnico} | Tamaño: {(request.Archivo.Length / 1024.0):F2} KB",
                     nuevoDocumento.IdentificadorDocumento,
                     HttpContext.Connection.RemoteIpAddress?.ToString() ?? ""
                 );
 
-                _registradorDeLog.LogInformation($"Documento subido: {request.NombreDescriptivo} por usuario {request.UsuarioId}");
+                _registradorDeLog.LogInformation($"Documento subido exitosamente: {nombreLimpio} por usuario {request.UsuarioId}");
 
                 return CreatedAtAction(nameof(ObtenerDocumentoPorId), new { id = nuevoDocumento.IdentificadorDocumento },
                     new
@@ -264,6 +332,8 @@ public async Task<ActionResult<IEnumerable<object>>> ObtenerTodosLosDocumentos()
                         mensaje = "Documento subido exitosamente",
                         documentoId = nuevoDocumento.IdentificadorDocumento,
                         nombreArchivo = nombreArchivoUnico,
+                        nombreDescriptivo = nombreLimpio,
+                        tamañoKB = (request.Archivo.Length / 1024.0),
                         exitoso = true
                     });
             }
@@ -352,6 +422,7 @@ public async Task<ActionResult<IEnumerable<object>>> ObtenerTodosLosDocumentos()
         public string NombreDescriptivoDelDocumento { get; set; } = "";
         public string RutaFisicaDelArchivoDocumento { get; set; } = "";
         public string DescripcionAdicionalesDelDocumento { get; set; } = "";
+        public string TipoDocumento { get; set; } = "";
         public int IdentificadorUsuarioPropietarioDelDocumento { get; set; }
     }
 

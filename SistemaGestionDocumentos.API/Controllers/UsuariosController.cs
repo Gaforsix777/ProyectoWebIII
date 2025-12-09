@@ -3,6 +3,7 @@ using Microsoft.EntityFrameworkCore;
 using SistemaGestionDocumentos.API.Data;
 using SistemaGestionDocumentos.API.Models;
 using SistemaGestionDocumentos.API.Services;
+using SistemaGestionDocumentos.API.Utils;
 using System.Security.Cryptography;
 using System.Text;
 
@@ -38,29 +39,47 @@ namespace SistemaGestionDocumentos.API.Controllers
         {
             try
             {
-                // Validar que el rol sea válido
-                string[] rolesValidos = { "Solicitante", "Aprobador", "Admin" };
+                // Validar correo electrónico
+                var (correoValido, mensajeCorreo) = ValidadorDelSistema.ValidarCorreoElectronico(
+                    datosPeticionRegistro.CorreoElectronico);
+                if (!correoValido)
+                    return BadRequest(new { mensaje = mensajeCorreo, exitoso = false });
+
+                // Validar nombre completo
+                var (nombreValido, mensajeNombre) = ValidadorDelSistema.ValidarNombreCompleto(
+                    datosPeticionRegistro.NombreCompleto);
+                if (!nombreValido)
+                    return BadRequest(new { mensaje = mensajeNombre, exitoso = false });
+
+                // Validar contraseña
+                var (contraseñaValida, mensajeContraseña) = ValidadorDelSistema.ValidarContraseña(
+                    datosPeticionRegistro.Contraseña);
+                if (!contraseñaValida)
+                    return BadRequest(new { mensaje = mensajeContraseña, exitoso = false });
+
+                // Validar rol
                 string rolIngresado = datosPeticionRegistro.Rol ?? "Solicitante";
-                
-                if (!rolesValidos.Contains(rolIngresado, StringComparer.OrdinalIgnoreCase))
-                    return BadRequest(new { 
-                        mensaje = $"Rol inválido. Los roles permitidos son: {string.Join(", ", rolesValidos)}", 
-                        exitoso = false 
-                    });
+                var (rolValido, mensajeRol) = ValidadorDelSistema.ValidarRol(rolIngresado);
+                if (!rolValido)
+                    return BadRequest(new { mensaje = mensajeRol, exitoso = false });
 
-                var usuarioYaExiste = await _contextoBD.UsuariosDelSistema
-                    .FirstOrDefaultAsync(u => u.CorreoElectronicoDelUsuario == datosPeticionRegistro.CorreoElectronico);
+                // Validar que el correo sea único
+                var (correoUnico, mensajeUnico) = await ValidadorDelSistema.ValidarCorreoUnico(
+                    datosPeticionRegistro.CorreoElectronico.ToLower(), _contextoBD);
+                if (!correoUnico)
+                    return BadRequest(new { mensaje = mensajeUnico, exitoso = false });
 
-                if (usuarioYaExiste != null)
-                    return BadRequest(new { mensaje = "El correo ya está registrado en el sistema", exitoso = false });
+                // Sanitizar datos de entrada
+                string correoLimpio = ValidadorDelSistema.SanitizarTexto(datosPeticionRegistro.CorreoElectronico.ToLower());
+                string nombreLimpio = ValidadorDelSistema.SanitizarTexto(datosPeticionRegistro.NombreCompleto);
 
                 var contraseñaHasheada = ObtenerHashDelaSHA256(datosPeticionRegistro.Contraseña);
 
                 var nuevoUsuario = new Usuario
                 {
-                    CorreoElectronicoDelUsuario = datosPeticionRegistro.CorreoElectronico,
+                    CorreoElectronicoDelUsuario = correoLimpio,
                     ContraseñaHashDelUsuario = contraseñaHasheada,
-                    NombreCompletoDelUsuario = datosPeticionRegistro.NombreCompleto,
+                    NombreCompletoDelUsuario = nombreLimpio,
                     RolDelUsuario = rolIngresado,
                     FechaCreacionDelUsuario = DateTime.UtcNow,
                     IndicadorUsuarioActivo = true
@@ -69,19 +88,26 @@ namespace SistemaGestionDocumentos.API.Controllers
                 _contextoBD.UsuariosDelSistema.Add(nuevoUsuario);
                 await _contextoBD.SaveChangesAsync();
 
-                // Registrar en auditoría - el usuario se audita a sí mismo
+                // Registrar en auditoría
                 await _servicioAuditoria.RegistrarAccionAuditoria(
                     nuevoUsuario.IdentificadorUsuario,
-                    $"Nuevo usuario registrado: {datosPeticionRegistro.CorreoElectronico}",
-                    $"Rol: {rolIngresado}",
+                    "Nuevo usuario registrado",
+                    $"Rol: {rolIngresado} | Email: {correoLimpio}",
                     null,
                     HttpContext.Connection.RemoteIpAddress?.ToString() ?? ""
                 );
 
-                _registradorDeLog.LogInformation($"Nuevo usuario registrado: {datosPeticionRegistro.CorreoElectronico}");
+                _registradorDeLog.LogInformation($"Nuevo usuario registrado exitosamente: {correoLimpio}");
 
                 return CreatedAtAction(nameof(ObtenerUsuarioPorId), new { id = nuevoUsuario.IdentificadorUsuario },
-                    new { mensaje = "Usuario registrado exitosamente", usuarioId = nuevoUsuario.IdentificadorUsuario, exitoso = true });
+                    new { 
+                        mensaje = "Usuario registrado exitosamente", 
+                        usuarioId = nuevoUsuario.IdentificadorUsuario,
+                        correoElectronico = correoLimpio,
+                        nombreCompleto = nombreLimpio,
+                        rol = rolIngresado,
+                        exitoso = true 
+                    });
             }
             catch (Exception excepcion)
             {
@@ -224,13 +250,9 @@ namespace SistemaGestionDocumentos.API.Controllers
             try
             {
                 // Validar que el nuevo rol sea válido
-                string[] rolesValidos = { "Solicitante", "Aprobador", "Admin" };
-                
-                if (!rolesValidos.Contains(datosActualizacion.NuevoRol, StringComparer.OrdinalIgnoreCase))
-                    return BadRequest(new { 
-                        mensaje = $"Rol inválido. Los roles permitidos son: {string.Join(", ", rolesValidos)}", 
-                        exitoso = false 
-                    });
+                var (rolValido, mensajeRol) = ValidadorDelSistema.ValidarRol(datosActualizacion.NuevoRol);
+                if (!rolValido)
+                    return BadRequest(new { mensaje = mensajeRol, exitoso = false });
 
                 var usuarioAActualizar = await _contextoBD.UsuariosDelSistema
                     .FirstOrDefaultAsync(u => u.IdentificadorUsuario == id);
@@ -238,19 +260,27 @@ namespace SistemaGestionDocumentos.API.Controllers
                 if (usuarioAActualizar == null)
                     return NotFound(new { mensaje = "Usuario no encontrado", exitoso = false });
 
+                // Validar que el usuario esté activo
+                if (!usuarioAActualizar.IndicadorUsuarioActivo)
+                    return BadRequest(new { mensaje = "No se puede actualizar el rol de un usuario desactivado", exitoso = false });
+
+                // Validar que no sea el mismo rol
+                if (usuarioAActualizar.RolDelUsuario.Equals(datosActualizacion.NuevoRol, StringComparison.OrdinalIgnoreCase))
+                    return BadRequest(new { mensaje = "El nuevo rol es igual al rol actual", exitoso = false });
+
                 var rolAnterior = usuarioAActualizar.RolDelUsuario;
                 usuarioAActualizar.RolDelUsuario = datosActualizacion.NuevoRol;
 
                 _contextoBD.UsuariosDelSistema.Update(usuarioAActualizar);
                 await _contextoBD.SaveChangesAsync();
 
-                // Registrar en auditoría - obtener usuario autenticado desde header
+                // Registrar en auditoría
                 if (Request.Headers.TryGetValue("X-Usuario-Id", out var usuarioIdHeader) && int.TryParse(usuarioIdHeader.ToString(), out int usuarioActualId))
                 {
                     await _servicioAuditoria.RegistrarAccionAuditoria(
                         usuarioActualId,
-                        $"Rol del usuario {id} actualizado",
-                        $"De: {rolAnterior} → A: {datosActualizacion.NuevoRol}",
+                        "Rol del usuario actualizado",
+                        $"Usuario ID {id} | De: {rolAnterior} → A: {datosActualizacion.NuevoRol}",
                         null,
                         HttpContext.Connection.RemoteIpAddress?.ToString() ?? ""
                     );
@@ -258,7 +288,13 @@ namespace SistemaGestionDocumentos.API.Controllers
 
                 _registradorDeLog.LogInformation($"Rol del usuario {id} actualizado de {rolAnterior} a {datosActualizacion.NuevoRol}");
 
-                return Ok(new { mensaje = "Rol actualizado exitosamente", exitoso = true });
+                return Ok(new { 
+                    mensaje = "Rol actualizado exitosamente", 
+                    usuarioId = id,
+                    rolAnterior = rolAnterior,
+                    nuevoRol = datosActualizacion.NuevoRol,
+                    exitoso = true 
+                });
             }
             catch (Exception excepcion)
             {
